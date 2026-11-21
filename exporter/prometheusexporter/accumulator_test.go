@@ -1128,6 +1128,33 @@ func TestTimeseriesSignatureNotMutating(t *testing.T) {
 	require.Equal(t, origAttrs, attrs) // make sure attrs are not mutated
 }
 
+func TestAccumulateDoesNotAliasInput(t *testing.T) {
+	rm := pmetric.NewResourceMetrics()
+	rm.Resource().Attributes().PutStr("service.name", "service")
+	sm := rm.ScopeMetrics().AppendEmpty()
+	sm.Scope().SetName("scope")
+	sm.Scope().Attributes().PutStr("scope_attribute", "value")
+	metric := sm.Metrics().AppendEmpty()
+	metric.SetName("test_metric")
+	dp := metric.SetEmptyGauge().DataPoints().AppendEmpty()
+	dp.SetIntValue(1)
+	dp.SetTimestamp(pcommon.NewTimestampFromTime(time.Now()))
+
+	a := newAccumulator(zap.NewNop(), time.Hour)
+	require.Equal(t, 1, a.Accumulate(rm))
+
+	// The accumulator must not hold on to rm: a reference into it keeps the whole ResourceMetrics,
+	// with every data point, in memory until the series expires.
+	rm.Resource().Attributes().PutStr("service.name", "changed")
+	sm.Scope().Attributes().PutStr("scope_attribute", "changed")
+
+	_, resourceAttrs, _, _, _, scopeAttributes := a.Collect()
+	require.Len(t, resourceAttrs, 1)
+	require.Equal(t, map[string]any{"service.name": "service"}, resourceAttrs[0].AsRaw())
+	require.Len(t, scopeAttributes, 1)
+	require.Equal(t, map[string]any{"scope_attribute": "value"}, scopeAttributes[0].AsRaw())
+}
+
 func getMetricProperties(metric pmetric.Metric) (
 	attributes pcommon.Map,
 	ts time.Time,

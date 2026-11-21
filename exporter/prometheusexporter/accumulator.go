@@ -90,14 +90,19 @@ func newAccumulator(logger *zap.Logger, metricExpiration time.Duration) accumula
 func (a *lastValueAccumulator) Accumulate(rm pmetric.ResourceMetrics) (n int) {
 	now := time.Now()
 	ilms := rm.ScopeMetrics()
-	resourceAttrs := rm.Resource().Attributes()
+	// The accumulated values outlive rm. A map that aliases rm would keep all of rm reachable, with
+	// every metric and data point in it, for as long as a value that holds the map is registered.
+	resourceAttrs := pcommon.NewMap()
+	rm.Resource().Attributes().CopyTo(resourceAttrs)
 
 	for i := 0; i < ilms.Len(); i++ {
 		ilm := ilms.At(i)
+		scopeAttributes := pcommon.NewMap()
+		ilm.Scope().Attributes().CopyTo(scopeAttributes)
 
 		metrics := ilm.Metrics()
 		for j := 0; j < metrics.Len(); j++ {
-			n += a.addMetric(metrics.At(j), ilm.Scope().Name(), ilm.Scope().Version(), ilm.SchemaUrl(), ilm.Scope().Attributes(), resourceAttrs, now)
+			n += a.addMetric(metrics.At(j), ilm.Scope().Name(), ilm.Scope().Version(), ilm.SchemaUrl(), scopeAttributes, resourceAttrs, now)
 		}
 	}
 
